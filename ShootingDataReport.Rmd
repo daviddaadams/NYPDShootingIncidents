@@ -1,0 +1,143 @@
+---
+title: "NYPDShootingMarkdown"
+author: "D Adams"
+date: "2024-04-16"
+output:
+  pdf_document: default
+  html_document: default
+---
+``` {r enviroment_set_up, include= FALSE}
+knitr::opts_chunk$set(eval=TRUE, echo=FALSE, results="hide", message=FALSE)
+```
+## Introduction
+
+### Data Overview
+- This report uses a comprehensive dataset provided by the New York City Police Department (NYPD), which details shooting incidents recorded across the five boroughs of New York City. The data is sourced from the NYPD's open data portal, an initiative aimed at increasing transparency and accessibility of city data to the public. The data set includes incidents from January 2006 onwards, providing historical context that allows for an in depth analysis over a long time period. 
+### Relevant Dataset Attributes
+Below are the attributes from the data set that we explore in depth:
+- OCCUR_DATE: The date on which the shooting incident occurred, allowing analysis of temporal patterns and trends.
+- OCCUR_TIME: The exact time at which the incident was reported, facilitating an understanding of time-specific trends such as night-time versus day-time incidents.
+- BORO: The borough in which the incident occurred, categorized into Manhattan, Brooklyn, Queens, the Bronx, and Staten Island, which aids in geographical trend analysis.
+
+Several other fields provide more details, but are not central to the primary analysis in this report. 
+
+### Motivation
+Managing and mitigating violent crimes such as shooting is a key challenge for law enforcement and public policy makers. Analyzing detailed crime data can show patterns and trends that are critical for developing solutions. New York, one of the largest cities in America, presents an interesting case study for understanding factors at play. 
+
+### Objectives
+- **Identify temporal trends** in shooting incidents, understanding how these vary over months and years of data.
+- **Evaluate geographical distribution** of shootings across NYC's boroughs to analyze where shooting hot-spots are. 
+- **Predict future trends** in shooting incidents using a statistical model. 
+
+``` {r import_data, message= FALSE}
+knitr::opts_chunk$set(eval=TRUE, echo=FALSE, results="hide")
+library(tidyverse)
+library(lubridate)
+library(ggplot2)
+library(scales)
+url_in <- "https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD"
+shooting_data <- read_csv(url_in)
+```
+
+``` {r clean_data, message=FALSE}
+shooting_data<-shooting_data %>%
+  mutate(
+    OCCUR_DATE=mdy(OCCUR_DATE),
+    OCCUR_TIME=hms(OCCUR_TIME),
+    BORO=factor(BORO),
+    PERP_AGE_GROUP = factor(PERP_AGE_GROUP),
+    VIC_AGE_GROUP = factor(VIC_AGE_GROUP),
+    PRECINCT= factor(PRECINCT)
+  )%>%
+  select(-LOC_OF_OCCUR_DESC, -JURISDICTION_CODE, -LOC_CLASSFCTN_DESC, -INCIDENT_KEY, -LOCATION_DESC, -X_COORD_CD, -Y_COORD_CD, -Latitude, -Longitude, -Lon_Lat)
+```
+
+``` {r data_sum_and_handling_missing_data, message=FALSE}
+summary(shooting_data)
+#Strategy for handling missing data will be to remove rows with n/a
+shooting_data <- shooting_data %>%
+  drop_na()
+```
+## Visualizations
+- The following line graph illustrates the daily count of shooting incidents over time. Analyzing these trends can help us identify patterns or anomalies in the data, such as spikes on specific dates that might correlate with particular events or changes in local policies.
+- The bar plot displays the number of shootings across different boroughs, providing a clear visualization of geographical disparities in gun violence. Understanding these variations is crucial for targeted interventions and resource allocation.
+- The final plot shows the monthly average of shootings across the years in the data. This is crucial for identifying the uptick in shooting violence in different months of the year. 
+``` {r data_visualization, message= FALSE}
+#Plotting the number of shooting incidents over time
+shooting_data %>%
+  count(OCCUR_DATE) %>%
+  ggplot(aes(x= OCCUR_DATE, y=n)) +
+  geom_line() +
+  labs(title= "Daily Shooting Incidents", x="Date", y= "Number of Incidents")
+
+# Visualizing the number of shootings by borough with a bar plot
+shooting_data %>%
+  count(BORO) %>%
+  ggplot (aes(x=reorder(BORO, n), y=n, fill= BORO))+
+  geom_col() +
+  labs(title= "Shootings by BORO", x="Borough", y="Number of Incidents") +
+  coord_flip()
+
+# Aggregating shooting data by month for all boroughs
+shooting_data <- shooting_data %>%
+  mutate(MONTH_YEAR = floor_date(OCCUR_DATE, "month"))
+
+# Create a new column that represents just the month
+shooting_data <- shooting_data %>%
+  mutate(MONTH = month(MONTH_YEAR, label = TRUE))  # label = TRUE gives month abbreviations
+
+# Calculate average shootings per month over all years
+monthly_averages <- shooting_data %>%
+  group_by(MONTH) %>%
+  summarise(average_shootings = mean(n()), .groups = 'drop')
+
+#Visualize monthly averages across the years
+ggplot(monthly_averages, aes(x = MONTH, y = average_shootings)) +
+  geom_line(color = "red", linewidth= 1) +  # Adds a line connecting the points
+  geom_point(color = "blue", size = 3) +  # Adds points at each average value
+  labs(title = "Average Monthly Shooting Incidents in NYC",
+       x = "Month",
+       y = "Average Number of Shootings") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+## Modeling
+The following visualization compares actual monthly shooting incidents with those predicted by a linear model based on time and borough. This comparison can help assess the accuracy of our predictive model and identify any consistent discrepancies between expected and observed outcomes, which might indicate areas for model improvement or unexpected changes in trends.
+
+``` {r modeling, message= FALSE}
+#Fitting a linear model predicting the number of incidents based on borough and time of shooting
+# Aggregating data and adding it to the dataset
+# Aggregate data by month and borough, and calculate counts
+shooting_data <- shooting_data %>%
+  mutate(MONTH = floor_date(OCCUR_DATE, unit="month")) %>%
+  group_by(MONTH, BORO) %>%
+  summarise(n = n(), .groups = 'drop')
+
+# Fit the linear regression model with month and BORO as predictors
+lm_model_monthly <- lm(n ~ MONTH + BORO, data=shooting_data)
+
+# Generate predicted values from the monthly model
+shooting_data$predicted_n = predict(lm_model_monthly, newdata=shooting_data)
+# Visualizing actual vs predicted shooting incidents over time by BORO
+ggplot(shooting_data, aes(x=MONTH)) +
+  geom_line(aes(y=n, color=BORO, linetype="Actual"), linewidth=1) +
+  geom_line(aes(y=predicted_n, color=BORO, linetype="Predicted"), linewidth=1) +
+  labs(title = "Actual vs. Predicted Monthly Shooting Incidents by Borough",
+       x = "Month", y = "Number of Incidents") +
+  scale_color_manual(values=c("red", "blue", "green", "yellow", "purple")) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom") +
+  guides(linetype=guide_legend(title="Type"), color=guide_legend(title="Borough"))
+```
+
+## Summary And Conclusion
+Throughout this project we have explored shootings incidents in New York as documented by the NYPD.Through this exploration we have found emerging patterns from geographical and time factors.
+
+### Key Findings
+- **Time Trends**: Our analysis found an overall decrease in shootings from about 2005-2020 but a sharp increase starting in 2020 in all boroughs. Further analysis would have to be conducted for local law changes during this period, but it can be said with confidence that the COVID-19 epidemic had something to do with the increase. We also identified that shooting violence significantly increased during the summer months. 
+- **Geographical Discrepancies**: The geographical breakdown shows an increase of shootings in Brooklyn and the Bronx compared to the other boroughs. More analysis must be conducted to bring context as to why, such as socio-economic information and police activity in the area. 
+
+### Model Insights
+- I used a simple regression model to predict monthly shooting incidents in the different boroughs of NYC. The variance in accuracy across boroughs suggest that additional variable such as socio-economic factors or police presence would enhance it's predictive power. 
+
